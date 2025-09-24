@@ -1,29 +1,12 @@
 # RAG with Llama 3 Demo
 
-This project demonstrates Retrieval Augmented Generation (RAG) using Llama 3 and a PDF document.
+This project demonstrates Retrieval Augmented Generation (RAG) using Gemini and PDF documents. It includes a script (`multi_thesis_rag.py`) that reads multiple PDFs, chunks and embeds their text, retrieves relevant chunks for a user query, and generates an answer using an LLM.
 
 ## Features
-- Reads and extracts text from a PDF
-- Chunks and embeds the document
-- Retrieves relevant chunks based on a user query
-- Generates an answer using Llama 3, augmented by retrieved context
+- Reads and extracts text from multiple PDFs (with OCR fallback)
+- Chunks and embeds documents using Sentence Transformers
+- Retrieves relevant chunks using FAISS vector search
+- Generates an answer using Gemini (Google Generative Language API) with context from retrieved chunks
+- Prints metadata for top relevant documents
 
-## Requirements
-- Python 3.8+
-- See `requirements.txt` for dependencies
 
-## Usage
-1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-2. Run the script:
-   ```
-   python rag_llama3.py <path_to_pdf> "Your question here"
-   ```
-
-## Notes
-- The Llama 3 model (`meta-llama/Meta-Llama-3-8B-Instruct`) is loaded from Hugging Face. You may need to accept their terms and have sufficient hardware.
-- For large PDFs, processing may take time.
-
----
