@@ -1,3 +1,51 @@
+# Prompt chaining for multi-step reasoning with Gemini
+def prompt_chain(top_chunks, prompts, api_key):
+    context = ""
+    answer = ""
+    for idx, prompt_text in enumerate(prompts):
+        # For first prompt, build context from top_chunks
+        if idx == 0:
+            # Build metadata summary
+            doc_infos = []
+            seen_pdfs = set()
+            for c in top_chunks:
+                meta = c['meta']
+                pdf_id = meta['pdf']
+                if pdf_id not in seen_pdfs:
+                    doc_infos.append(f"- Title: {meta.get('title','') or '[Unknown]'}\n  Author: {meta.get('author','') or '[Unknown]'}\n  Year: {meta.get('publication_year','') or '[Unknown]'}\n  File: {pdf_id}")
+                    seen_pdfs.add(pdf_id)
+                if len(doc_infos) >= 10:
+                    break
+            doc_info_str = "Top 10 relevant documents found:\n" + "\n".join(doc_infos) + "\n\n"
+            chunk_context = "\n\n".join([f"From {c['meta']['pdf']} (chunk {c['meta']['chunk_idx']}): {c['chunk']}" for c in top_chunks])
+            context = f"{doc_info_str}Context: {chunk_context}\n\n"
+        # Build prompt for Gemini
+        full_prompt = f"{context}Question: {prompt_text}\nAnswer: "
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        headers = {
+            "Content-Type": "application/json",
+            "X-goog-api-key": api_key
+        }
+        data = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": full_prompt}
+                    ]
+                }
+            ],
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 1500
+            }
+        }
+        response = requests.post(url, headers=headers, json=data)
+        response.raise_for_status()
+        result = response.json()
+        answer = result['candidates'][0]['content']['parts'][0]['text'].strip()
+        # Update context for next step
+        context = f"{context}{answer}\n\n"
+    return answer
 import os
 import glob
 from PyPDF2 import PdfReader
@@ -149,36 +197,52 @@ def gemini_overview(top_chunks, question, api_key):
     return result['candidates'][0]['content']['parts'][0]['text'].strip()
 
 if __name__ == "__main__":
-    pdf_folder = "theses"  # Change to your folder name
-    question = input("Enter your research question: ")
-    api_key = os.getenv("GEMINI_API_KEY")
-    print("Extracting and chunking PDFs...")
-    all_chunks, metadata = extract_and_chunk_pdfs(pdf_folder)
-    print(f"Total chunks: {len(all_chunks)}")
-    if len(all_chunks) == 0:
-        print("No text extracted from any PDFs. Exiting without calling LLM.")
-        exit(1)
-    print("Loading embedding model...")
-    embedder = SentenceTransformer('all-MiniLM-L6-v2')
-    print("Embedding chunks...")
-    chunk_embeddings = embed_chunks(all_chunks, embedder)
-    print("Building FAISS index...")
-    index = build_faiss_index(np.array(chunk_embeddings))
-    print("Retrieving top relevant chunks...")
-    top_chunks = retrieve_top_chunks(question, embedder, index, all_chunks, metadata, top_n=10)
-    # Print top 10 relevant documents metadata
-    doc_infos = []
-    seen_pdfs = set()
-    for c in top_chunks:
-        meta = c['meta']
-        pdf_id = meta['pdf']
-        if pdf_id not in seen_pdfs:
-            doc_infos.append(f"- Title: {meta.get('title','') or '[Unknown]'}\n  Author: {meta.get('author','') or '[Unknown]'}\n  Year: {meta.get('publication_year','') or '[Unknown]'}\n  File: {pdf_id}")
-            seen_pdfs.add(pdf_id)
-        if len(doc_infos) >= 10:
-            break
-    print("\nTop 10 relevant documents found:")
-    print("\n".join(doc_infos))
-    print("\nGenerating overview with Gemini...")
-    overview = gemini_overview(top_chunks, question, api_key)
-    print("\n---\nOverview:\n", overview)
+        pdf_folder = "theses"  # Change to your folder name
+        api_key = os.getenv("GEMINI_API_KEY")
+        print("Extracting and chunking PDFs...")
+        all_chunks, metadata = extract_and_chunk_pdfs(pdf_folder)
+        print(f"Total chunks: {len(all_chunks)}")
+        if len(all_chunks) == 0:
+            print("No text extracted from any PDFs. Exiting without calling LLM.")
+            exit(1)
+        print("Loading embedding model...")
+        embedder = SentenceTransformer('all-MiniLM-L6-v2')
+        print("Embedding chunks...")
+        chunk_embeddings = embed_chunks(all_chunks, embedder)
+        print("Building FAISS index...")
+        index = build_faiss_index(np.array(chunk_embeddings))
+
+        # Prompt chaining workflow
+        prompts = []
+        while True:
+            if len(prompts) == 0:
+                prompt_text = input("Enter your research question: ").strip()
+                if not prompt_text:
+                    print("No research question entered. Exiting.")
+                    exit(1)
+            else:
+                prompt_text = input("Enter another research question or type 'END' to finish: ").strip()
+                if prompt_text.upper() == 'END':
+                    print("Prompt chaining ended.")
+                    break
+                if not prompt_text:
+                    continue
+            prompts.append(prompt_text)
+            print("Retrieving top relevant chunks...")
+            top_chunks = retrieve_top_chunks(prompt_text, embedder, index, all_chunks, metadata, top_n=10)
+            # Print top 10 relevant documents metadata
+            doc_infos = []
+            seen_pdfs = set()
+            for c in top_chunks:
+                meta = c['meta']
+                pdf_id = meta['pdf']
+                if pdf_id not in seen_pdfs:
+                    doc_infos.append(f"- Title: {meta.get('title','') or '[Unknown]'}\n  Author: {meta.get('author','') or '[Unknown]'}\n  Year: {meta.get('publication_year','') or '[Unknown]'}\n  File: {pdf_id}")
+                    seen_pdfs.add(pdf_id)
+                if len(doc_infos) >= 10:
+                    break
+            print("\nTop 10 relevant documents found:")
+            print("\n".join(doc_infos))
+            print("\nGenerating overview with Gemini...")
+            answer = prompt_chain(top_chunks, prompts, api_key)
+            print(f"\n---\nAnswer to Prompt {len(prompts)}:\n{answer}\n")
